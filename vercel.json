@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/blob-upload",
+      "destination": "/api/blob-upload.js"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    }
+  ]
+}

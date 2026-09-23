@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DAFF Player</title>
+<link rel="stylesheet" href="style.css" />
+<style>
+  .screen-wrap{ background: var(--bg-alt); border-radius: var(--radius); padding: 10px; margin-bottom: 16px; }
+  .screen{
+    position: relative; background: #000; border-radius: 6px; aspect-ratio: 4/3;
+    overflow: hidden; display:flex; align-items:center; justify-content:center;
+  }
+  .screen img{ width:100%; height:100%; object-fit: cover; }
+  .screen .placeholder{ font-size: 13px; color: var(--text-faint); text-align:center; padding: 0 20px; }
+  .screen .stage-tag{
+    position:absolute; left: 10px; bottom: 10px; font-size: 12px; font-weight:700;
+    color: #fff; background: rgba(0,0,0,0.55); padding: 3px 10px; border-radius: 100px;
+  }
+  .meta-row{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 12px; gap: 12px; }
+  .meta-row .title{ font-size: 15px; font-weight: 700; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
+  .meta-row .artist{ font-size: 12.5px; color: var(--text-dim); margin-top: 3px; }
+  .meta-row .rec{ display:flex; align-items:center; gap:6px; font-size: 11px; color: var(--text-dim); flex-shrink:0; }
+  .rec .dot{ width:7px; height:7px; border-radius:50%; background: var(--text-faint); }
+  .rec.playing .dot{ background: var(--danger); animation: blink 1.2s steps(1) infinite; }
+  @keyframes blink{ 50% { opacity: 0.25; } }
+
+  .scrub-row{ display:flex; align-items:center; gap:10px; font-size: 11.5px; color: var(--text-dim); margin-bottom: 18px; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; flex:1; height: 4px; background: var(--border); border-radius: 2px; outline:none; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background: var(--accent); cursor:pointer; }
+  input[type=range]::-moz-range-thumb{ width:14px; height:14px; border-radius:50%; background: var(--accent); border:none; cursor:pointer; }
+
+  .transport{ display:flex; align-items:center; justify-content:center; gap: 14px; margin-bottom: 22px; }
+  .transport button{
+    background: var(--surface-alt); border: 1px solid var(--border); color: var(--text);
+    width: 44px; height: 40px; border-radius: var(--radius-sm); cursor:pointer; font-size: 14px;
+    display:flex; align-items:center; justify-content:center; transition: background 0.1s ease, border-color 0.1s ease;
+  }
+  .transport button:hover{ border-color: var(--accent); }
+  .transport button.play{ width: 58px; background: var(--accent); color: var(--accent-contrast); border-color: transparent; }
+  .transport button.play:hover{ background: var(--accent-hover); }
+  .transport button:disabled{ opacity:0.3; cursor:default; }
+
+  .stages{ max-height: 220px; overflow-y: auto; }
+  .stage-row{ display:flex; align-items:center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--border); cursor:pointer; font-size: 13px; }
+  .stage-row:last-child{ border-bottom:none; }
+  .stage-row:hover{ background: var(--surface-alt); }
+  .stage-row.active{ color: var(--accent); }
+  .stage-row .idx{ font-family:'IBM Plex Mono',monospace; color: var(--text-faint); width: 20px; flex-shrink:0; }
+  .stage-row.active .idx{ color: var(--accent); }
+  .stage-row .label{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .stage-row .time{ font-family:'IBM Plex Mono',monospace; color: var(--text-faint); font-size: 11px; flex-shrink:0; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <a class="logo" href="index.html"><span class="mark">D</span> DAFF</a>
+  <nav class="site-nav">
+    <a href="player.html" class="active">Player</a>
+    <a href="converter.html">Converter</a>
+    <a href="library.html">Library</a>
+  </nav>
+</header>
+
+<main class="page narrow">
+  <div class="eyebrow">Player</div>
+  <h1>Play a .daff file</h1>
+  <p class="lede">Drop a file in below — the artwork switches automatically as playback crosses each stage boundary.</p>
+
+  <div class="card card-pad">
+    <div class="screen-wrap">
+      <div class="screen" id="screen">
+        <div class="placeholder" id="placeholder">Insert a .daff file below to begin</div>
+        <img id="thumbImg" style="display:none" alt="Current stage artwork" />
+        <div class="stage-tag" id="stageTag" style="display:none"></div>
+      </div>
+    </div>
+
+    <div class="dropzone" id="dropzone">
+      <strong>Choose a .daff file</strong> or drag one here
+      <input type="file" id="fileInput" accept=".daff" />
+    </div>
+    <div class="msg err" id="errorText" style="display:none"></div>
+
+    <div class="meta-row">
+      <div class="titles">
+        <div class="title" id="titleText">—</div>
+        <div class="artist" id="artistText">—</div>
+      </div>
+      <div class="rec" id="recIndicator"><span class="dot"></span><span>STOP</span></div>
+    </div>
+
+    <div class="scrub-row">
+      <span id="curTime" class="mono">0:00</span>
+      <input type="range" id="seek" min="0" max="1000" value="0" disabled />
+      <span id="totalTime" class="mono">0:00</span>
+    </div>
+
+    <div class="transport">
+      <button id="btnPrev" title="Previous stage" disabled>|&lt;</button>
+      <button id="btnPlay" class="play" title="Play/Pause" disabled>&#9654;</button>
+      <button id="btnNext" title="Next stage" disabled>&gt;|</button>
+    </div>
+
+    <div class="section-label">Stages / Chapters</div>
+    <div class="stages" id="stages"></div>
+  </div>
+
+  <audio id="audio" preload="metadata"></audio>
+</main>
+
+<footer class="site-footer">
+  <span>DAFF Player</span>
+  <a href="index.html">← Back to overview</a>
+</footer>
+
+<script>
+(function(){
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const audio = document.getElementById('audio');
+  const thumbImg = document.getElementById('thumbImg');
+  const placeholder = document.getElementById('placeholder');
+  const stageTag = document.getElementById('stageTag');
+  const titleText = document.getElementById('titleText');
+  const artistText = document.getElementById('artistText');
+  const errorText = document.getElementById('errorText');
+  const seek = document.getElementById('seek');
+  const curTime = document.getElementById('curTime');
+  const totalTime = document.getElementById('totalTime');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnPrev = document.getElementById('btnPrev');
+  const btnNext = document.getElementById('btnNext');
+  const stagesEl = document.getElementById('stages');
+  const recIndicator = document.getElementById('recIndicator');
+
+  let daff = null, audioUrl = null, currentStageIndex = -1, seeking = false;
+
+  function fmtTime(sec){
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return m + ':' + String(s).padStart(2, '0');
+  }
+  function showError(msg){
+    errorText.textContent = msg;
+    errorText.style.display = msg ? 'block' : 'none';
+  }
+  function readCString(view, offset, len){
+    const bytes = new Uint8Array(view.buffer, view.byteOffset + offset, len);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+  function parseDaffBuffer(buf){
+    const view = new DataView(buf);
+    if (readCString(view, 0, 4) !== 'DAFF') throw new Error('not a DAFF file (bad magic header)');
+    const version = view.getUint8(4);
+    if (version > 1) throw new Error('this file uses a newer DAFF version (' + version + ') than this player supports');
+    const chunkCount = view.getUint32(8, true);
+    let offset = 12, meta = {}, stages = [];
+    const thumbnails = {};
+    let audioBytes = null, audioMime = 'audio/mpeg';
+    for (let i = 0; i < chunkCount; i++){
+      const type = readCString(view, offset, 4);
+      const length = view.getUint32(offset + 4, true);
+      const payloadStart = offset + 8;
+      if (type === 'META'){
+        meta = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf, payloadStart, length)));
+      } else if (type === 'STAG'){
+        stages = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf, payloadStart, length)));
+      } else if (type === 'THMB'){
+        const idLen = view.getUint8(payloadStart);
+        const id = readCString(view, payloadStart + 1, idLen);
+        const mimeLenOffset = payloadStart + 1 + idLen;
+        const mimeLen = view.getUint8(mimeLenOffset);
+        const mime = readCString(view, mimeLenOffset + 1, mimeLen);
+        const imgStart = mimeLenOffset + 1 + mimeLen;
+        thumbnails[id] = { mime, bytes: new Uint8Array(buf, imgStart, length - (imgStart - payloadStart)) };
+      } else if (type === 'AUDI'){
+        audioBytes = new Uint8Array(buf, payloadStart, length);
+      }
+      offset = payloadStart + length;
+    }
+    if (meta.audioMime) audioMime = meta.audioMime;
+    if (!audioBytes) throw new Error('DAFF file has no audio chunk');
+    return { meta, stages, thumbnails, audioBytes, audioMime };
+  }
+
+  function resetPlayer(){
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    audio.pause(); audio.removeAttribute('src');
+    thumbImg.style.display = 'none'; placeholder.style.display = 'block'; stageTag.style.display = 'none';
+    stagesEl.innerHTML = ''; titleText.textContent = '—'; artistText.textContent = '—';
+    curTime.textContent = '0:00'; totalTime.textContent = '0:00';
+    seek.value = 0; seek.disabled = true;
+    btnPlay.disabled = true; btnPrev.disabled = true; btnNext.disabled = true;
+    currentStageIndex = -1; setPlayingIcon(false);
+  }
+
+  function loadDaffFile(file){
+    showError('');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try{ setupPlayer(parseDaffBuffer(e.target.result), file.name); }
+      catch(err){ resetPlayer(); showError('could not read this file — ' + err.message); }
+    };
+    reader.onerror = () => showError('failed to read the file from disk');
+    reader.readAsArrayBuffer(file);
+  }
+
+  function setupPlayer(parsed, filename){
+    resetPlayer();
+    daff = parsed;
+    const audioBlob = new Blob([parsed.audioBytes], { type: parsed.audioMime });
+    audioUrl = URL.createObjectURL(audioBlob);
+    audio.src = audioUrl;
+
+    daff.thumbUrls = {};
+    Object.keys(parsed.thumbnails).forEach((id) => {
+      const t = parsed.thumbnails[id];
+      daff.thumbUrls[id] = URL.createObjectURL(new Blob([t.bytes], { type: t.mime }));
+    });
+
+    titleText.textContent = parsed.meta.title || filename;
+    artistText.textContent = [parsed.meta.artist, parsed.meta.album].filter(Boolean).join(' — ') || 'Unknown artist';
+
+    placeholder.style.display = 'none';
+    seek.disabled = false; btnPlay.disabled = false; btnPrev.disabled = false; btnNext.disabled = false;
+    renderStageList();
+    applyStageForTime(0);
+  }
+
+  function escapeHtml(s){ const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+  function renderStageList(){
+    stagesEl.innerHTML = '';
+    daff.stages.forEach((stage, i) => {
+      const row = document.createElement('div');
+      row.className = 'stage-row';
+      const end = (stage.endTime == null) ? '' : (' – ' + fmtTime(stage.endTime));
+      row.innerHTML = `<span class="idx">${String(i+1).padStart(2,'0')}</span><span class="label">${escapeHtml(stage.label)}</span><span class="time">${fmtTime(stage.startTime)}${end}</span>`;
+      row.addEventListener('click', () => { seekToTime(stage.startTime + 0.05); audio.play(); });
+      stagesEl.appendChild(row);
+    });
+  }
+
+  function stageIndexForTime(t){
+    for (let i = 0; i < daff.stages.length; i++){
+      const s = daff.stages[i];
+      const end = (s.endTime == null) ? Infinity : s.endTime;
+      if (t >= s.startTime && t < end) return i;
+    }
+    return daff.stages.length ? daff.stages.length - 1 : -1;
+  }
+
+  function applyStageForTime(t){
+    if (!daff || !daff.stages.length) return;
+    const idx = stageIndexForTime(t);
+    if (idx === currentStageIndex) return;
+    currentStageIndex = idx;
+    const stage = daff.stages[idx];
+    const url = daff.thumbUrls[stage.thumbnailId];
+    if (url){ thumbImg.src = url; thumbImg.style.display = 'block'; } else { thumbImg.style.display = 'none'; }
+    stageTag.textContent = stage.label; stageTag.style.display = 'block';
+    Array.from(stagesEl.children).forEach((row, i) => row.classList.toggle('active', i === idx));
+  }
+
+  function seekToTime(t){ audio.currentTime = Math.max(0, Math.min(t, audio.duration || t)); applyStageForTime(audio.currentTime); }
+  function setPlayingIcon(playing){
+    btnPlay.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+    recIndicator.classList.toggle('playing', playing);
+    recIndicator.querySelector('span:last-child').textContent = playing ? 'PLAY' : 'STOP';
+  }
+
+  btnPlay.addEventListener('click', () => { if (audio.paused) audio.play(); else audio.pause(); });
+  btnNext.addEventListener('click', () => { const n = daff.stages[currentStageIndex+1]; if (n) seekToTime(n.startTime + 0.05); });
+  btnPrev.addEventListener('click', () => {
+    const stage = daff.stages[currentStageIndex];
+    if (audio.currentTime - stage.startTime > 2) seekToTime(stage.startTime + 0.05);
+    else { const p = daff.stages[currentStageIndex-1]; seekToTime(p ? p.startTime + 0.05 : 0); }
+  });
+  audio.addEventListener('play', () => setPlayingIcon(true));
+  audio.addEventListener('pause', () => setPlayingIcon(false));
+  audio.addEventListener('ended', () => setPlayingIcon(false));
+  audio.addEventListener('loadedmetadata', () => { totalTime.textContent = fmtTime(audio.duration); });
+  audio.addEventListener('timeupdate', () => {
+    if (seeking) return;
+    curTime.textContent = fmtTime(audio.currentTime);
+    if (audio.duration) seek.value = Math.round((audio.currentTime / audio.duration) * 1000);
+    applyStageForTime(audio.currentTime);
+  });
+  seek.addEventListener('input', () => { seeking = true; if (audio.duration) curTime.textContent = fmtTime((seek.value/1000)*audio.duration); });
+  seek.addEventListener('change', () => { if (audio.duration) seekToTime((seek.value/1000)*audio.duration); seeking = false; });
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadDaffFile(fileInput.files[0]); });
+  ['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+  dropzone.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) loadDaffFile(f); });
+
+  resetPlayer();
+})();
+</script>
+</body>
+</html>

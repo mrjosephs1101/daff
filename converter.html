@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DAFF Converter</title>
+<link rel="stylesheet" href="style.css" />
+<style>
+  .audio-picker{
+    display:flex; align-items:center; gap: 12px; background: var(--surface-alt);
+    border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 22px;
+  }
+  .audio-picker .info{ font-size: 13px; color: var(--text-dim); flex:1; }
+  .audio-picker .info strong{ color: var(--text); font-weight:700; }
+
+  .stage-card{ background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+  .stage-card-top{ display:flex; align-items:center; gap: 10px; margin-bottom: 12px; }
+  .stage-card-top .idx{ font-family:'IBM Plex Mono',monospace; font-size: 13px; color: var(--accent); font-weight:700; width: 22px; }
+  .stage-card-top input[type=text]{
+    flex:1; background: transparent; border: none; border-bottom: 1px solid var(--border);
+    color: var(--text); padding: 5px 2px; font-size: 13.5px; border-radius:0;
+  }
+  .stage-card-top input[type=text]:focus{ border-color: var(--accent); }
+
+  .stage-card-row{ display:flex; align-items:center; gap: 12px; }
+  .stage-card-row .start-field input{ width: 90px; }
+  .stage-card-row .thumb-picker{ display:flex; align-items:center; gap: 10px; flex:1; min-width:0; }
+  .stage-card-row .thumb-preview{ width: 36px; height: 36px; border-radius: var(--radius-sm); object-fit: cover; border: 1px solid var(--border); flex-shrink:0; background: var(--bg-alt); }
+  .stage-card-row .thumb-name{ font-size: 12px; color: var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .btn-add-stage{
+    width:100%; background: transparent; border: 1.5px dashed var(--border); color: var(--text-dim);
+    padding: 12px; border-radius: var(--radius-sm); cursor:pointer; font-family: inherit; font-size: 13px; font-weight:600;
+  }
+  .btn-add-stage:hover{ border-color: var(--accent); color: var(--text); }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <a class="logo" href="index.html"><span class="mark">D</span> DAFF</a>
+  <nav class="site-nav">
+    <a href="player.html">Player</a>
+    <a href="converter.html" class="active">Converter</a>
+    <a href="library.html">Library</a>
+  </nav>
+</header>
+
+<main class="page narrow">
+  <div class="eyebrow">Converter</div>
+  <h1>Build a .daff file</h1>
+  <p class="lede">Everything runs in your browser — nothing is uploaded until you choose to send it to the library.</p>
+
+  <div class="card card-pad">
+    <div class="section-label">Track info</div>
+    <div class="field-grid" style="margin-bottom:12px;">
+      <div class="field"><label>Title</label><input type="text" id="titleInput" placeholder="Track title" /></div>
+      <div class="field"><label>Artist</label><input type="text" id="artistInput" placeholder="Artist name" /></div>
+    </div>
+    <div class="field" style="margin-bottom:22px;"><label>Album (optional)</label><input type="text" id="albumInput" /></div>
+
+    <div class="section-label">Audio file</div>
+    <div class="audio-picker">
+      <div class="info" id="audioInfo">No audio file chosen</div>
+      <button class="btn btn-secondary" id="btnAudio">Choose file</button>
+      <input type="file" id="audioInput" accept="audio/*" />
+    </div>
+
+    <div class="section-label">Stages / chapters</div>
+    <p class="lede" style="font-size:12.5px; margin-bottom:12px;">Each stage's end time is set automatically to the start of the next one — the last stage just runs to the end of the audio.</p>
+    <div id="stagesList"></div>
+    <button class="btn-add-stage" id="btnAddStage">+ Add stage</button>
+
+    <div style="margin-top:22px;">
+      <button class="btn btn-primary" id="btnBuild" disabled>Build &amp; download .daff</button>
+      <div class="msg" id="buildMsg"></div>
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <span>DAFF Converter</span>
+  <a href="index.html">← Back to overview</a>
+</footer>
+
+<script>
+(function(){
+  const titleInput = document.getElementById('titleInput');
+  const artistInput = document.getElementById('artistInput');
+  const albumInput = document.getElementById('albumInput');
+  const audioInput = document.getElementById('audioInput');
+  const btnAudio = document.getElementById('btnAudio');
+  const audioInfo = document.getElementById('audioInfo');
+  const stagesList = document.getElementById('stagesList');
+  const btnAddStage = document.getElementById('btnAddStage');
+  const btnBuild = document.getElementById('btnBuild');
+  const buildMsg = document.getElementById('buildMsg');
+
+  let audioFile = null, audioDuration = null, stageCount = 0;
+  const stages = {};
+
+  btnAudio.addEventListener('click', () => audioInput.click());
+  audioInput.addEventListener('change', () => {
+    const file = audioInput.files[0];
+    if (!file) return;
+    audioFile = file; audioDuration = null;
+    audioInfo.innerHTML = `<strong>${escapeHtml(file.name)}</strong> — reading duration…`;
+    const tempAudio = document.createElement('audio');
+    tempAudio.preload = 'metadata';
+    const url = URL.createObjectURL(file);
+    tempAudio.src = url;
+    tempAudio.addEventListener('loadedmetadata', () => {
+      audioDuration = tempAudio.duration;
+      audioInfo.innerHTML = `<strong>${escapeHtml(file.name)}</strong> — ${fmtTime(audioDuration)} (${humanSize(file.size)})`;
+      URL.revokeObjectURL(url); updateBuildState();
+    });
+    tempAudio.addEventListener('error', () => {
+      audioInfo.innerHTML = `<strong>${escapeHtml(file.name)}</strong> — ${humanSize(file.size)} (duration unknown)`;
+      URL.revokeObjectURL(url); updateBuildState();
+    });
+    updateBuildState();
+  });
+
+  function addStage(){
+    const id = 'stage' + (stageCount++);
+    const card = document.createElement('div');
+    card.className = 'stage-card';
+    card.dataset.id = id;
+    card.innerHTML = `
+      <div class="stage-card-top">
+        <span class="idx">--</span>
+        <input type="text" class="label-input" placeholder="Stage label (e.g. Stage 1, A1)" />
+        <button class="btn-icon" title="Remove stage">&times;</button>
+      </div>
+      <div class="stage-card-row">
+        <div class="field start-field"><label>Start (mm:ss)</label><input type="text" class="start-input" placeholder="0:00" /></div>
+        <div class="thumb-picker">
+          <img class="thumb-preview" alt="" />
+          <button class="btn btn-secondary btn-thumb">Choose image</button>
+          <span class="thumb-name">No thumbnail</span>
+          <input type="file" class="thumb-input" accept="image/*" />
+        </div>
+      </div>`;
+    stagesList.appendChild(card);
+
+    const labelEl = card.querySelector('.label-input');
+    const startEl = card.querySelector('.start-input');
+    const removeBtn = card.querySelector('.btn-icon');
+    const thumbBtn = card.querySelector('.btn-thumb');
+    const thumbInput = card.querySelector('.thumb-input');
+    const thumbPreview = card.querySelector('.thumb-preview');
+    const thumbName = card.querySelector('.thumb-name');
+
+    stages[id] = { card, labelEl, startEl, thumbFile: null };
+    labelEl.addEventListener('input', updateBuildState);
+    startEl.addEventListener('input', updateBuildState);
+    removeBtn.addEventListener('click', () => { card.remove(); delete stages[id]; renumberStages(); updateBuildState(); });
+    thumbBtn.addEventListener('click', () => thumbInput.click());
+    thumbInput.addEventListener('change', () => {
+      const file = thumbInput.files[0]; if (!file) return;
+      stages[id].thumbFile = file; thumbName.textContent = file.name;
+      thumbPreview.src = URL.createObjectURL(file); updateBuildState();
+    });
+    renumberStages();
+  }
+  function renumberStages(){
+    Array.from(stagesList.children).forEach((card, i) => { card.querySelector('.idx').textContent = String(i+1).padStart(2,'0'); });
+  }
+  btnAddStage.addEventListener('click', () => addStage());
+
+  function escapeHtml(s){ const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  function fmtTime(sec){
+    if (!isFinite(sec) || sec < 0) return '0:00';
+    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.floor(sec%60);
+    return (h>0 ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0');
+  }
+  function humanSize(n){ for (const u of ['B','KB','MB','GB']){ if (n<1024) return n.toFixed(u==='B'?0:1)+u; n/=1024; } return n.toFixed(1)+'TB'; }
+  function parseTimeInput(str){
+    str = (str||'').trim(); if (!str) return null;
+    if (/^\d+(\.\d+)?$/.test(str)) return parseFloat(str);
+    const parts = str.split(':').map(p=>p.trim());
+    if (parts.some(p => p==='' || isNaN(Number(p)))) return null;
+    let seconds = 0; for (const p of parts) seconds = seconds*60 + Number(p);
+    return seconds;
+  }
+
+  function updateBuildState(){
+    buildMsg.textContent = ''; buildMsg.className = 'msg';
+    const stageEls = Object.values(stages);
+    const problems = [];
+    if (!audioFile) problems.push('choose an audio file');
+    if (stageEls.length === 0) problems.push('add at least one stage');
+    stageEls.forEach((s, i) => {
+      if (!s.labelEl.value.trim()) problems.push(`stage ${i+1} needs a label`);
+      if (parseTimeInput(s.startEl.value) === null) problems.push(`stage ${i+1} needs a valid start time`);
+      if (!s.thumbFile) problems.push(`stage ${i+1} needs a thumbnail`);
+    });
+    btnBuild.disabled = problems.length > 0;
+    if (problems.length > 0 && (audioFile || stageEls.length > 0)){
+      buildMsg.textContent = problems[0] + (problems.length > 1 ? ` (+${problems.length-1} more)` : '');
+      buildMsg.classList.add('err');
+    }
+  }
+
+  function u32le(n){ const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; }
+  function chunkParts(typeStr, payloadParts){
+    const typeBytes = new TextEncoder().encode(typeStr);
+    let length = 0;
+    for (const p of payloadParts) length += (p instanceof Blob) ? p.size : p.byteLength;
+    return [typeBytes, u32le(length), ...payloadParts];
+  }
+
+  async function buildDaff(){
+    const stageEls = Object.values(stages);
+    const parsedStages = stageEls.map(s => ({ label: s.labelEl.value.trim(), start: parseTimeInput(s.startEl.value), thumbFile: s.thumbFile }))
+      .sort((a,b) => a.start - b.start);
+
+    const meta = {
+      title: titleInput.value.trim() || audioFile.name,
+      artist: artistInput.value.trim(), album: albumInput.value.trim(),
+      audioMime: audioFile.type || 'audio/mpeg',
+      createdWith: 'DAFF Converter (browser)', createdAt: new Date().toISOString(),
+    };
+    if (audioDuration) meta.duration = Math.round(audioDuration * 1000) / 1000;
+
+    const stagesJson = parsedStages.map((s, i) => ({
+      id: 'stage'+i, label: s.label, startTime: s.start,
+      endTime: (i+1 < parsedStages.length) ? parsedStages[i+1].start : null,
+      thumbnailId: 'thumb'+i,
+    }));
+
+    const headerParts = [ new TextEncoder().encode('DAFF'), new Uint8Array([1]), new Uint8Array([0,0,0]), u32le(2 + parsedStages.length + 1) ];
+    const metaParts = chunkParts('META', [new TextEncoder().encode(JSON.stringify(meta))]);
+    const stagParts = chunkParts('STAG', [new TextEncoder().encode(JSON.stringify(stagesJson))]);
+
+    let thmbParts = [];
+    parsedStages.forEach((s, i) => {
+      const idBytes = new TextEncoder().encode('thumb'+i);
+      const mime = s.thumbFile.type || 'image/jpeg';
+      const mimeBytes = new TextEncoder().encode(mime);
+      thmbParts = thmbParts.concat(chunkParts('THMB', [ new Uint8Array([idBytes.length]), idBytes, new Uint8Array([mimeBytes.length]), mimeBytes, s.thumbFile ]));
+    });
+
+    const audiParts = chunkParts('AUDI', [audioFile]);
+    const blob = new Blob([...headerParts, ...metaParts, ...stagParts, ...thmbParts, ...audiParts], { type: 'application/octet-stream' });
+    return { blob, meta };
+  }
+
+  btnBuild.addEventListener('click', async () => {
+    btnBuild.disabled = true; buildMsg.textContent = 'building…'; buildMsg.className = 'msg';
+    try{
+      const { blob, meta } = await buildDaff();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safeName = (meta.title || 'output').replace(/[^a-z0-9_\- ]/gi, '').trim() || 'output';
+      a.href = url; a.download = safeName + '.daff';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      buildMsg.textContent = `done — ${humanSize(blob.size)} written`; buildMsg.classList.add('ok');
+    } catch(err){ buildMsg.textContent = 'build failed — ' + err.message; buildMsg.classList.add('err'); }
+    updateBuildState();
+  });
+
+  addStage();
+  updateBuildState();
+})();
+</script>
+</body>
+</html>
